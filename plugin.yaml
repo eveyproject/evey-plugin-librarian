@@ -1,0 +1,16 @@
+name: librarian
+display_name: Librarian
+kind: plugin
+version: 1.0.0
+description: "Library housekeeping - finds probable duplicates (same title twice, wasted disk) and holes in numbered sagas (you keep Rocky II and III but Rocky is missing). The home hero shows the global tally, each library page shows its own findings; a clean library shows nothing. Detection only - it never touches a file."
+author: Evey project
+language: nodejs
+entrypoint: node main.js
+permissions:
+  - public
+web_root: dist
+frontend:
+  - slot: home.hero
+    src: dist/hero.js
+  - slot: library.sidebar
+    src: dist/library.js
