@@ -91,6 +91,30 @@
     out.sort(function (a, b) { return b.missing.length - a.missing.length; });
     return out;
   }
+
+  // fetchWatchables reads every movie and series, page by page: one call of
+  // the bridge returns at most 500 items, and without a type those are mixed
+  // with seasons and episodes, so a large library was only ever half read.
+  // `list` is window.evey.media.list; `libraryId` narrows to one library.
+  // Bounded at 200 pages per type so a server that ignores paging cannot
+  // spin the page forever.
+  function fetchWatchables(list, libraryId) {
+    var PAGE = 500;
+    var out = [];
+    function walk(type, page) {
+      var opts = { type: type, page: page, pageSize: PAGE };
+      if (libraryId) opts.libraryId = libraryId;
+      return list(opts).then(function (resp) {
+        var items = (resp && resp.items) || [];
+        for (var i = 0; i < items.length; i++) out.push(items[i]);
+        var total = Number(resp && resp.total) || 0;
+        if (items.length === PAGE && page * PAGE < total && page < 200) return walk(type, page + 1);
+      });
+    }
+    return walk("MEDIA_ITEM_TYPE_MOVIE", 1)
+      .then(function () { return walk("MEDIA_ITEM_TYPE_SERIES", 1); })
+      .then(function () { return out; });
+  }
   // --- end inlined ---
 
   var STR = {
@@ -117,8 +141,7 @@
     var lang = String(init.locale || "en").slice(0, 2);
     var S = STR[lang] || STR.en;
     var libraryId = init.context && init.context.libraryId ? String(init.context.libraryId) : "";
-    window.evey.media.list(libraryId ? { libraryId: libraryId } : {}).then(function (resp) {
-      var items = (resp && resp.items) || [];
+    fetchWatchables(window.evey.media.list, libraryId).then(function (items) {
       var dups = findDuplicates(items);
       var holes = findSagaHoles(items);
       document.body.innerHTML = "";
@@ -129,7 +152,7 @@
       var strip = h("div",
         "display:flex;flex-direction:column;gap:2px;padding:8px 12px;border-radius:10px;margin-bottom:8px;" +
         "background:var(--surface, rgba(127,127,127,.12));font-size:12px;");
-    var head = h("div", "display:flex;gap:8px;align-items:baseline;");
+      var head = h("div", "display:flex;gap:8px;align-items:baseline;");
       head.appendChild(h("span", "", "🗂️"));
       head.appendChild(h("span", "font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent, #7aa2f7);", S.title));
       strip.appendChild(head);

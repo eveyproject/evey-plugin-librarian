@@ -1,4 +1,4 @@
-// node --test suite for the detection logic, plus the drift guard: hero.js
+// node --test suite for the detection logic, plus the drift guard: admin.js
 // and library.js inline scan.js's block verbatim, and an edited copy that no
 // longer matches the source of truth must fail loudly here.
 import { test } from "node:test";
@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { normTitle, sagaKey, findDuplicates, findSagaHoles } = require(join(here, "../dist/scan.js"));
+const { normTitle, sagaKey, findDuplicates, findSagaHoles, fetchWatchables } = require(join(here, "../dist/scan.js"));
 
 const movie = (id, title, year) => ({ id, title, year, type: "MEDIA_ITEM_TYPE_MOVIE" });
 
@@ -57,13 +57,38 @@ test("findSagaHoles reports missing numbers, including a missing first episode",
   assert.deepEqual(holes[0].missing, [1]);
 });
 
-test("the inlined copies in hero.js and library.js match scan.js verbatim", () => {
+test("fetchWatchables walks every page of movies, then of series", async () => {
+  const calls = [];
+  const movies = Array.from({ length: 1203 }, (_, i) => movie("m" + i, "M" + i, 2000));
+  const list = async (opts) => {
+    calls.push(opts);
+    const pool = opts.type === "MEDIA_ITEM_TYPE_MOVIE" ? movies : [{ id: "s1", title: "S", type: "MEDIA_ITEM_TYPE_SERIES" }];
+    const from = (opts.page - 1) * opts.pageSize;
+    return { items: pool.slice(from, from + opts.pageSize), total: String(pool.length) };
+  };
+  const items = await fetchWatchables(list, "L1");
+  assert.equal(items.length, 1204);
+  assert.deepEqual(calls.map((c) => [c.type, c.page]), [
+    ["MEDIA_ITEM_TYPE_MOVIE", 1], ["MEDIA_ITEM_TYPE_MOVIE", 2], ["MEDIA_ITEM_TYPE_MOVIE", 3], ["MEDIA_ITEM_TYPE_SERIES", 1],
+  ]);
+  assert.ok(calls.every((c) => c.libraryId === "L1" && c.pageSize === 500));
+});
+
+test("fetchWatchables stops on a server that ignores paging", async () => {
+  let n = 0;
+  const full = Array.from({ length: 500 }, (_, i) => movie("x" + i, "X", 2000));
+  const items = await fetchWatchables(async () => { n++; return { items: full, total: 999999 }; });
+  assert.equal(n, 400, "bounded at 200 pages per type");
+  assert.equal(items.length, 200000);
+});
+
+test("the inlined copies in admin.js and library.js match scan.js verbatim", () => {
   const src = readFileSync(join(here, "../dist/scan.js"), "utf8");
   const start = src.indexOf("  // normTitle flattens");
   const end = src.indexOf("\n\n  var api =");
   assert.ok(start >= 0 && end > start, "scan.js block markers moved - update the drift guard");
   const block = src.slice(start, end);
-  for (const file of ["hero.js", "library.js"]) {
+  for (const file of ["admin.js", "library.js"]) {
     const mod = readFileSync(join(here, "../dist", file), "utf8");
     assert.ok(mod.includes(block), `${file} drifted from scan.js`);
   }

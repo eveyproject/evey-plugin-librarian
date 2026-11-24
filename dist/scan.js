@@ -92,7 +92,31 @@
     return out;
   }
 
-  var api = { normTitle: normTitle, sagaKey: sagaKey, findDuplicates: findDuplicates, findSagaHoles: findSagaHoles };
+  // fetchWatchables reads every movie and series, page by page: one call of
+  // the bridge returns at most 500 items, and without a type those are mixed
+  // with seasons and episodes, so a large library was only ever half read.
+  // `list` is window.evey.media.list; `libraryId` narrows to one library.
+  // Bounded at 200 pages per type so a server that ignores paging cannot
+  // spin the page forever.
+  function fetchWatchables(list, libraryId) {
+    var PAGE = 500;
+    var out = [];
+    function walk(type, page) {
+      var opts = { type: type, page: page, pageSize: PAGE };
+      if (libraryId) opts.libraryId = libraryId;
+      return list(opts).then(function (resp) {
+        var items = (resp && resp.items) || [];
+        for (var i = 0; i < items.length; i++) out.push(items[i]);
+        var total = Number(resp && resp.total) || 0;
+        if (items.length === PAGE && page * PAGE < total && page < 200) return walk(type, page + 1);
+      });
+    }
+    return walk("MEDIA_ITEM_TYPE_MOVIE", 1)
+      .then(function () { return walk("MEDIA_ITEM_TYPE_SERIES", 1); })
+      .then(function () { return out; });
+  }
+
+  var api = { normTitle: normTitle, sagaKey: sagaKey, findDuplicates: findDuplicates, findSagaHoles: findSagaHoles, fetchWatchables: fetchWatchables };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.LibrarianScan = api;
 })(typeof self !== "undefined" ? self : this);
