@@ -148,6 +148,9 @@
       movedTo: "Déplacé vers",
       doneHint: "Les fichiers sont dans le dossier .evey-trash de leur bibliothèque : rien n'est effacé du disque tant que vous ne le videz pas.",
       undo: "Annuler",
+      pendingTag: "en cours, copie vers un autre disque",
+      pendingHint: "Le dossier corbeille est sur un autre disque : Evey copie le fichier en arrière-plan, quelques minutes pour un gros film. Une notification Evey vous dira quand c'est fini, et « Annuler » sera proposé ensuite.",
+      trashedPending: function (n) { return n + (n > 1 ? " fichiers partent" : " fichier part") + " vers la corbeille en arrière-plan"; },
       undoing: "Restauration...",
       restored: "Annulé : les fichiers sont revenus à leur place, les titres réapparaissent après le scan.",
       restoreFailed: function (n, msg) { return n + (n > 1 ? " fichiers n'ont pas pu" : " fichier n'a pas pu") + " revenir : " + msg; },
@@ -182,6 +185,9 @@
       movedTo: "Moved to",
       doneHint: "The files are in the .evey-trash folder of their library: nothing is deleted from the disk until you empty it.",
       undo: "Undo",
+      pendingTag: "in progress, copying to another disk",
+      pendingHint: "The trash folder is on another disk: Evey copies the file in the background, a few minutes for a large film. An Evey notification will tell you when it is done, and Undo will be offered then.",
+      trashedPending: function (n) { return n + (n > 1 ? " files are" : " file is") + " going to the trash in the background"; },
       undoing: "Restoring...",
       restored: "Undone: the files are back where they were, the titles reappear after the scan.",
       restoreFailed: function (n, msg) { return n + (n > 1 ? " files" : " file") + " could not come back: " + msg; },
@@ -201,6 +207,11 @@
   // disappears from the duplicates once a single copy is left, so the page
   // says what happened and which copy stayed.
   var recent = [];
+  // Items whose copy to the trash runs in the background (another disk): kept
+  // out of the duplicates until Evey drops them, and the list read again
+  // every few seconds meanwhile.
+  var pending = {};
+  var pollTimer = 0;
 
   var MUTED = "color:var(--text-muted, #9aa0aa);";
   var BTN = "flex:none;padding:2px 9px;border-radius:6px;font:inherit;font-size:12px;cursor:pointer;background:transparent;";
@@ -305,20 +316,27 @@
       var ok = (res && res.trashed && res.trashed.length) || 0;
       var ko = (res && res.failed && res.failed.length) || 0;
       if (ok) {
-        var gone = {};
-        for (var i = 0; i < res.trashed.length; i++) gone[res.trashed[i].id] = res.trashed[i].trashedPath;
+        var gone = {}, waiting = {};
+        for (var i = 0; i < res.trashed.length; i++) {
+          gone[res.trashed[i].id] = res.trashed[i].trashedPath;
+          if (res.trashed[i].pending) { waiting[res.trashed[i].id] = true; pending[res.trashed[i].id] = true; }
+        }
         var left = group.entries.filter(function (e) { return !(e.id in gone); });
         var kept = null;
         for (var j = 0; j < left.length; j++) if (!kept || better(left[j], kept)) kept = left[j];
-        var freed = 0, moved = [];
+        var freed = 0, moved = [], movedIds = [];
         for (var k = 0; k < targets.length; k++) {
           if (!(targets[k].id in gone)) continue;
           freed += Number(targets[k].fileSize) || 0;
           moved.push(gone[targets[k].id] || targets[k].filePath);
+          movedIds.push(targets[k].id);
         }
-        recent.unshift({ title: group.title, kept: kept, moved: moved, freed: freed });
+        recent.unshift({ title: group.title, kept: kept, moved: moved, movedIds: movedIds, freed: freed });
       }
-      if (ok) window.evey.toast("success", S.trashed(ok));
+      var nPending = 0;
+      for (var w in waiting) nPending++;
+      if (ok - nPending > 0) window.evey.toast("success", S.trashed(ok - nPending));
+      if (nPending) window.evey.toast("info", S.trashedPending(nPending));
       if (ko) window.evey.toast("error", S.trashFailed(ko) + " : " + res.failed[0].message);
       if (ok) load();
     }).catch(function (err) {
@@ -397,6 +415,26 @@
     });
   }
 
+  function isPending(rec) {
+    for (var i = 0; rec.movedIds && i < rec.movedIds.length; i++) if (pending[rec.movedIds[i]]) return true;
+    return false;
+  }
+
+  // settle drops from pending the items Evey no longer lists (their copy is
+  // whole, the item gone) and reads the list again soon while any remain.
+  function settle(items) {
+    var listed = {};
+    for (var i = 0; i < items.length; i++) listed[items[i].id] = true;
+    var any = false;
+    for (var id in pending) {
+      if (!listed[id]) delete pending[id];
+      else any = true;
+    }
+    clearTimeout(pollTimer);
+    if (any) pollTimer = setTimeout(load, 10000);
+    return items.filter(function (it) { return !pending[it.id]; });
+  }
+
   // recentBox: what was moved this visit, the copy kept (quality, path, a
   // link) and where the others went. Stays until the page is left.
   function recentBox() {
@@ -414,8 +452,10 @@
         box.appendChild(entry);
         continue;
       }
-      if (canTrash) top.appendChild(button(r.busy ? S.undoing : S.undo, false, (function (rec) { return function () { undo(rec); }; })(r)));
+      var still = isPending(r);
+      if (canTrash && !still) top.appendChild(button(r.busy ? S.undoing : S.undo, false, (function (rec) { return function () { undo(rec); }; })(r)));
       entry.appendChild(top);
+      if (still) entry.appendChild(h("div", "margin-top:3px;font-size:12px;color:var(--warning, #f59e0b);", S.pendingHint));
       if (r.kept) {
         var kr = h("div", "display:flex;gap:10px;align-items:center;margin-top:3px;");
         var kb = h("div", "flex:1;min-width:0;");
@@ -431,7 +471,9 @@
         entry.appendChild(h("div", MUTED, S.keptNone));
       }
       for (var j = 0; j < r.moved.length; j++) {
-        var mv = h("div", "font:11px ui-monospace,SFMono-Regular,Menlo,monospace;" + MUTED + "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;", S.movedTo + " " + r.moved[j]);
+        var waitingOne = r.movedIds && pending[r.movedIds[j]];
+        var mv = h("div", "font:11px ui-monospace,SFMono-Regular,Menlo,monospace;" + MUTED + "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+          S.movedTo + " " + r.moved[j] + (waitingOne ? " (" + S.pendingTag + ")" : ""));
         mv.title = r.moved[j];
         entry.appendChild(mv);
       }
@@ -441,7 +483,8 @@
     return box;
   }
 
-  function render(items) {
+  function render(all) {
+    var items = settle(all);
     var dups = findDuplicates(items);
     var holes = findSagaHoles(items);
     document.body.innerHTML = "";

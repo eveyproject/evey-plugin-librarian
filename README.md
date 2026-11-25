@@ -42,6 +42,8 @@ Before anything moves, **Evey itself** shows what is about to go, from its own r
 
 After the move, a green box at the top of the page says which copy you kept (with a link to it), where the others went, and offers **Undo**.
 
+If the trash folder is on another disk than the film (pooled disks, mergerfs or unRAID), Evey copies the file there in the background: a few minutes for a large film, without blocking the page. The box shows the move as in progress, an Evey notification tells you when it is done, and **Undo** appears then.
+
 ### Where do the files go?
 
 Into a folder named **`.evey-trash`** at the root of the library, with the same sub-folders. **Nothing is deleted from your disk.** Empty that folder yourself when you are sure, from your file manager or your NAS.
