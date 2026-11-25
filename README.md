@@ -7,7 +7,9 @@
 ## What it does
 
 - ♻️ **Finds duplicates.** The same film twice (or more) in your libraries, with each copy's quality side by side: resolution, codec, bitrate, audio, size.
-- 🏆 **Marks the best copy.** Higher resolution first, then HDR, colour depth and bitrate. A remake from another year is never mistaken for a spare.
+- 🏆 **Marks the best copy.** Higher resolution first, then HDR, colour depth and bitrate.
+- 🎯 **Only real copies.** Same title *and* same year, file names that agree, the same edition (a 3D, Extended or Director's Cut version is never a spare of the regular one) and the same length. A film that Evey misidentified, or another film of the same name, is left out.
+- 🙈 **Not a duplicate?** One click sets a group aside for good; *Show them again* brings everything back.
 - 🗑️ **Clears the spares, safely.** One click on *Keep the best, move the others to the trash*, or *Trash* on a single copy. Evey asks first, and nothing is ever deleted from your disk (see below).
 - 🧩 **Spots holes in sagas.** You keep *Rocky II* and *III* but *Rocky* is missing? It tells you.
 - 📚 **Shows up where you browse.** Each library page gets a small strip with its own findings. A clean library shows nothing.
@@ -35,6 +37,7 @@ For each duplicate:
 | **Open** | Goes to that copy's page in Evey. |
 | **Trash** | Moves that one copy to the trash. |
 | **Keep the best, move the others to the trash** | Keeps the copy marked *best quality* and moves the others. |
+| **Not a duplicate** | Sets the group aside. It comes back if a new copy shows up. |
 
 Before anything moves, **Evey itself** shows what is about to go, from its own records: title, size, quality and file. You confirm or cancel there.
 
@@ -56,7 +59,8 @@ To get a file back: click **Undo** right after, or move it back where it was and
 |---|---|
 | ✅ Reads | titles, years, file paths, sizes and video/audio quality of your films and series |
 | ✅ Asks | Evey to move a file to the trash, which you always confirm in Evey's own window |
-| ❌ Never | deletes a file, connects to the internet, or stores anything |
+| ✅ Stores | the groups you set aside as "not a duplicate", in its own settings |
+| ❌ Never | deletes a file or connects to the internet |
 
 File paths and quality are shown to **administrators only**. Anyone else browsing a library sees the strip with titles only.
 
@@ -66,7 +70,7 @@ File paths and quality are shown to **administrators only**. Anyone else browsin
 
 **Trash is not offered on my phone or TV.** It works from the admin page in a web browser for now.
 
-**A remake shows up as a duplicate.** Two films with the same title but different years are listed as *remake or another edition?* and never offered to the trash together.
+**A remake shows up as a duplicate.** It no longer does: two films with the same title but different years are never grouped. For anything else that is not a real copy, use **Not a duplicate**.
 
 **Does it work with series?** Duplicate series are listed (a series is a folder, so there is nothing to trash); saga holes are checked on films.
 
@@ -76,6 +80,7 @@ File paths and quality are shown to **administrators only**. Anyone else browsin
 ### Permissions
 
 - `public`: titles, years and types through the host bridge.
+- `prefs`: the groups set aside as "not a duplicate", in the plugin's own per-profile settings.
 - `media.files`: file path, size and quality of each item. Evey puts it on the plugin token only when the viewer is an administrator.
 - `media.trash`: the admin page may call `evey.media.trash(ids)` and `evey.media.restore(paths)`. The host shows its own confirmation and calls the admin endpoints on the administrator's session; the plugin never holds that right itself.
 - Slots: `admin.nav` (the full page) and `library.sidebar` (the strip).

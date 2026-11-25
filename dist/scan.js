@@ -34,9 +34,59 @@
     return { base: m[1].trim(), num: num };
   }
 
-  // findDuplicates: watchable items sharing a normalized title. Same year (or
-  // both yearless) = probable duplicate copy; different years = flagged as a
-  // remake/edition, worth an eye but softer.
+  // Release and quality tags: noise in a file name, never what tells two
+  // films apart.
+  var NOISE = {};
+  ("2160p 1080p 1080i 720p 576p 480p 4k uhd hd sd fhd bluray bdrip brrip bdremux remux web webrip webdl dl hdtv " +
+   "dvdrip dvd dvdscr hdrip x264 x265 h264 h265 hevc avc xvid divx mpeg4 aac ac3 eac3 dts dtshd truehd atmos mp3 " +
+   "flac hdr hdr10 dv dolby vision 10bit 8bit multi vff vfq vf vo vostfr truefrench french english subfrench " +
+   "proper repack internal limited mkv avi mp4 m4v ts").split(" ").forEach(function (w) { NOISE[w] = true; });
+
+  // Editions: the same film, a different cut or format, never a spare copy.
+  var EDITIONS = { "3d": "3d", "imax": "imax", "extended": "extended", "unrated": "unrated", "uncut": "uncut",
+    "remastered": "remastered", "theatrical": "theatrical", "directors": "directors", "director": "directors" };
+
+  // fileWords: the words of a file name that name the work, its edition set
+  // apart. "Dune.2021.1080p.BluRay.x264-GROUP.mkv" -> {dune} + no edition;
+  // "Edge of Tomorrow - 3D - 1080p.mkv" -> {edge, of, tomorrow} + 3d.
+  function fileWords(path) {
+    var base = String(path || "").split(/[\\/]/).pop().replace(/\.[a-z0-9]{2,4}$/i, "");
+    var words = normTitle(base).split(" ");
+    var out = {}, editions = [];
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i];
+      if (!w || NOISE[w] || /^(19|20)\d\d$/.test(w)) continue;
+      if (EDITIONS[w]) { editions.push(EDITIONS[w]); continue; }
+      out[w] = true;
+    }
+    return { words: out, edition: editions.sort().join("+") };
+  }
+
+  function subset(a, b) {
+    for (var k in a) if (!b[k]) return false;
+    return true;
+  }
+
+  // sameWork: two items with the same title and year are copies of one film
+  // only if, when their files are known, they are the same edition, their
+  // file names agree (one's words within the other's: release groups add
+  // words, they never change them) and their lengths are within 8 %. A film
+  // the server misidentified fails one of these.
+  function sameWork(a, b) {
+    if (a.filePath && b.filePath) {
+      var fa = fileWords(a.filePath), fb = fileWords(b.filePath);
+      if (fa.edition !== fb.edition) return false;
+      if (!subset(fa.words, fb.words) && !subset(fb.words, fa.words)) return false;
+    }
+    var da = Number(a.quality && a.quality.durationMs) || 0;
+    var db = Number(b.quality && b.quality.durationMs) || 0;
+    if (da > 0 && db > 0 && Math.abs(da - db) / Math.max(da, db) > 0.08) return false;
+    return true;
+  }
+
+  // findDuplicates: copies of one film or series - same type, same title,
+  // same year, and the same work by sameWork. A same title in another year is
+  // another film, never listed. Each group's entries are linked copy to copy.
   function findDuplicates(items) {
     var byKey = {};
     for (var i = 0; i < (items || []).length; i++) {
@@ -44,23 +94,39 @@
       if (!it || !it.id || !it.title) continue;
       var ty = String(it.type || "");
       if (ty !== "MEDIA_ITEM_TYPE_MOVIE" && ty !== "MEDIA_ITEM_TYPE_SERIES") continue;
-      var key = ty + ":" + normTitle(it.title);
+      var key = ty + ":" + normTitle(it.title) + ":" + (it.year || 0);
       (byKey[key] = byKey[key] || []).push(it);
     }
     var out = [];
     for (var k in byKey) {
       var group = byKey[k];
       if (group.length < 2) continue;
-      var years = {};
-      for (var j = 0; j < group.length; j++) years[group[j].year || 0] = true;
-      out.push({
-        title: group[0].title,
-        entries: group,
-        sameYear: Object.keys(years).length === 1,
-      });
+      // Cluster the group: a copy joins a cluster when it is the same work as
+      // one of its members.
+      var clusters = [];
+      for (var j = 0; j < group.length; j++) {
+        var home = null;
+        for (var c = 0; c < clusters.length && !home; c++) {
+          for (var m = 0; m < clusters[c].length; m++) {
+            if (sameWork(group[j], clusters[c][m])) { home = clusters[c]; break; }
+          }
+        }
+        if (home) home.push(group[j]);
+        else clusters.push([group[j]]);
+      }
+      for (var q = 0; q < clusters.length; q++) {
+        if (clusters[q].length < 2) continue;
+        out.push({ title: clusters[q][0].title, entries: clusters[q], sameYear: true });
+      }
     }
     out.sort(function (a, b) { return b.entries.length - a.entries.length; });
     return out;
+  }
+
+  // dupKey names a duplicate group by its copies, for "not a duplicate":
+  // a new copy changes the key and brings the group back.
+  function dupKey(group) {
+    return "dup:" + group.entries.map(function (e) { return e.id; }).sort().join(",");
   }
 
   // findSagaHoles: numbered groups (at least one entry with num >= 2) whose
@@ -116,7 +182,7 @@
       .then(function () { return out; });
   }
 
-  var api = { normTitle: normTitle, sagaKey: sagaKey, findDuplicates: findDuplicates, findSagaHoles: findSagaHoles, fetchWatchables: fetchWatchables };
+  var api = { normTitle: normTitle, sagaKey: sagaKey, findDuplicates: findDuplicates, dupKey: dupKey, findSagaHoles: findSagaHoles, fetchWatchables: fetchWatchables };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.LibrarianScan = api;
 })(typeof self !== "undefined" ? self : this);

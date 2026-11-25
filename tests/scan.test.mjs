@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { normTitle, sagaKey, findDuplicates, findSagaHoles, fetchWatchables } = require(join(here, "../dist/scan.js"));
+const { normTitle, sagaKey, findDuplicates, findSagaHoles, fetchWatchables, dupKey } = require(join(here, "../dist/scan.js"));
 
 const movie = (id, title, year) => ({ id, title, year, type: "MEDIA_ITEM_TYPE_MOVIE" });
 
@@ -29,7 +29,7 @@ test("sagaKey reads arabic and roman numbering, and part/chapter wrappers", () =
   assert.equal(sagaKey("Blade Runner 2049").num, 1);
 });
 
-test("findDuplicates groups same-title watchables and tells copies from remakes", () => {
+test("findDuplicates groups same-title watchables of one year, never another year's film", () => {
   const dups = findDuplicates([
     movie("a", "Dune", 2021),
     movie("b", "Dune", 2021),
@@ -38,10 +38,7 @@ test("findDuplicates groups same-title watchables and tells copies from remakes"
     { id: "e", title: "Dune", type: "MEDIA_ITEM_TYPE_EPISODE" }, // never counted
   ]);
   assert.equal(dups.length, 1);
-  assert.equal(dups[0].entries.length, 3);
-  assert.equal(dups[0].sameYear, false);
-  const copies = findDuplicates([movie("a", "Dune", 2021), movie("b", "Dune", 2021)]);
-  assert.equal(copies[0].sameYear, true);
+  assert.deepEqual(dups[0].entries.map((e) => e.id).sort(), ["a", "b"]);
 });
 
 test("findSagaHoles reports missing numbers, including a missing first episode", () => {
@@ -92,4 +89,62 @@ test("the inlined copies in admin.js and library.js match scan.js verbatim", () 
     const mod = readFileSync(join(here, "../dist", file), "utf8");
     assert.ok(mod.includes(block), `${file} drifted from scan.js`);
   }
+});
+
+// Real false positives seen on a library: none of these is a spare copy.
+const film = (id, title, year, filePath, durationMs, extra = {}) =>
+  ({ id, title, year, type: "MEDIA_ITEM_TYPE_MOVIE", filePath, quality: { durationMs: String(durationMs) }, ...extra });
+
+test("findDuplicates: three different shows matched to one title stay apart by their file names", () => {
+  const dups = findDuplicates([
+    film("ny", "Les Experts", 1992, "/media/dvdrip/LES EXPERTS NEW YORK .avi", 2_600_000),
+    film("mi", "Les Experts", 1992, "/media/dvdrip/LES EXPERTS MIAMI .avi", 2_600_000),
+    film("lv", "Les Experts", 1992, "/media/dvdrip/LES EXPERTS LAS VEGAS .avi", 2_600_000),
+  ]);
+  assert.equal(dups.length, 0);
+});
+
+test("findDuplicates: the same title in different years is another film, never a duplicate", () => {
+  assert.equal(findDuplicates([
+    film("a", "The Colony", 2026, "/media/films/Colony - 1080P.mkv", 6_000_000),
+    film("b", "The Colony", 2013, "/media/films/The colony - 1080P.mkv", 5_700_000),
+  ]).length, 0);
+  assert.equal(findDuplicates([
+    film("c", "Die Alone", 2024, "/media/films/Die alone - 1080P.mkv", 5_800_000),
+    film("d", "Die Alone", 2020, "/media/films/Alone - 1080P.mkv", 5_900_000),
+  ]).length, 0);
+});
+
+test("findDuplicates: a misidentified film of another length is not a copy", () => {
+  assert.equal(findDuplicates([
+    film("dw", "Deadpool & Wolverine", 2024, "/media/films/Deadpool and wolverine - 2160P.mkv", 7_680_000),
+    film("w", "Deadpool & Wolverine", 2024, "/media/dvdrip/Wolverine.avi", 6_420_000),
+  ]).length, 0);
+});
+
+test("findDuplicates: a 3D edition is not a spare of the 2D film", () => {
+  assert.equal(findDuplicates([
+    film("3d", "Edge of Tomorrow", 2014, "/media/films/Edge of Tomorrow - 3D - 1080p.mkv", 6_780_000),
+    film("2d", "Edge of Tomorrow", 2014, "/media/films/Edge of Tomorrow - 1080p.mkv", 6_780_000),
+  ]).length, 0);
+});
+
+test("findDuplicates: true copies still group, whatever their release tags", () => {
+  const dups = findDuplicates([
+    film("a", "Dune", 2021, "/media/films/Dune (2021) - 2160p.mkv", 9_330_000),
+    film("b", "Dune", 2021, "/media/dl/Dune.2021.1080p.BluRay.x264-GROUP.mkv", 9_310_000),
+    film("c", "Dune", 2021, "/media/films/dune 720p.mkv", 9_330_000),
+  ]);
+  assert.equal(dups.length, 1);
+  assert.equal(dups[0].entries.length, 3);
+});
+
+test("findDuplicates: without paths (not an admin) same title and year still group", () => {
+  const dups = findDuplicates([movie("a", "Dune", 2021), movie("b", "Dune", 2021)]);
+  assert.equal(dups.length, 1);
+});
+
+test("dupKey: a dismissed group is named by its copies, so a new copy brings it back", () => {
+  const g = findDuplicates([movie("b", "Dune", 2021), movie("a", "Dune", 2021)])[0];
+  assert.equal(dupKey(g), "dup:a,b");
 });
