@@ -1,6 +1,6 @@
 # 🗂️ Librarian
 
-**Tidy up your Evey library: find the films you have twice, keep the best copy, and spot the sagas with a missing episode.**
+**Tidy up your Evey library: find the films you have twice and keep the best copy, see the episodes your series miss, and the films your sagas lack.**
 
 ![The Librarian page: every duplicate with its quality, size and file, the best copy marked](docs/admin-page.webp)
 
@@ -11,7 +11,9 @@
 - 🎯 **Only real copies.** Same title *and* same year, file names that agree, the same edition (a 3D, Extended or Director's Cut version is never a spare of the regular one) and the same length. A film that Evey misidentified, or another film of the same name, is left out.
 - 🙈 **Not a duplicate?** One click sets a group aside for good; *Show them again* brings everything back.
 - 🗑️ **Clears the spares, safely.** One click on *Keep the best, move the others to the trash*, or *Trash* on a single copy. Evey asks first, and nothing is ever deleted from your disk (see below).
-- 🧩 **Spots holes in sagas.** You keep *Rocky II* and *III* but *Rocky* is missing? It tells you.
+- 🧩 **Incomplete sagas.** You hold *Alien* and *Alien 3* but not *Aliens*? Evey knows each saga's films from TMDB and lists the released ones you lack. Titles numbered in their name (*Rocky II* and *III* without *Rocky*) are caught too.
+- 📺 **Missing episodes.** For each series, the aired episodes you do not have, season by season ("Season 2: episodes 1-3, 5", "Season 3, all of it"). A series TMDB does not know is read from the holes in your own numbering.
+- 🗂️ **Three tabs.** Duplicates · Incomplete sagas · Missing episodes, each with its count, each item can be ignored.
 - 📚 **Shows up where you browse.** Each library page gets a small strip with its own findings. A clean library shows nothing.
 
 ![The strip on a library page](docs/library-strip.webp)
@@ -24,7 +26,7 @@
 
 The page then appears in the admin menu, under **Plugins > Librarian**.
 
-> Needs Evey **0.1.14** or later.
+> Needs Evey **0.1.16** or later.
 
 ## Using it
 
@@ -59,7 +61,8 @@ To get a file back: click **Undo** right after, or move it back where it was and
 |---|---|
 | ✅ Reads | titles, years, file paths, sizes and video/audio quality of your films and series |
 | ✅ Asks | Evey to move a file to the trash, which you always confirm in Evey's own window |
-| ✅ Stores | the groups you set aside as "not a duplicate", in its own settings |
+| ✅ Reads | what your libraries miss (episodes, saga films), worked out by Evey from TMDB: the plugin never calls TMDB itself |
+| ✅ Stores | the groups you set aside as "not a duplicate" and the items you ignore, in its own settings |
 | ❌ Never | deletes a file or connects to the internet |
 
 File paths and quality are shown to **administrators only**. Anyone else browsing a library sees the strip with titles only.
@@ -82,6 +85,7 @@ File paths and quality are shown to **administrators only**. Anyone else browsin
 - `public`: titles, years and types through the host bridge.
 - `prefs`: the groups set aside as "not a duplicate", in the plugin's own per-profile settings.
 - `media.files`: file path, size and quality of each item. Evey puts it on the plugin token only when the viewer is an administrator.
+- `media.gaps`: `evey.media.gaps()`, what the libraries miss, worked out by Evey from the TMDB catalog it stores. Administrators only.
 - `media.trash`: the admin page may call `evey.media.trash(ids)` and `evey.media.restore(paths)`. The host shows its own confirmation and calls the admin endpoints on the administrator's session; the plugin never holds that right itself.
 - Slots: `admin.nav` (the full page) and `library.sidebar` (the strip).
 

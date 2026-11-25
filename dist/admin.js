@@ -213,6 +213,21 @@
       doneHint: "Les fichiers sont dans le dossier .evey-trash de leur bibliothèque : rien n'est effacé du disque tant que vous ne le videz pas.",
       undo: "Annuler",
       notDup: "Pas un doublon",
+      tabDups: "Doublons",
+      tabSagas: "Sagas incomplètes",
+      tabEpisodes: "Épisodes manquants",
+      ignore: "Ignorer",
+      ignoredLine: function (n) { return n + (n > 1 ? " éléments ignorés" : " élément ignoré"); },
+      gapsUnavailable: "Indisponible : il faut Evey 0.1.16 ou plus récent, et la permission media.gaps accordée au plugin.",
+      gapsLoading: "Lecture de ce qui manque...",
+      fromTmdb: "d'après TMDB",
+      fromNumbering: "d'après la numérotation de vos fichiers",
+      sagaOwned: function (o, m) { return o + (o > 1 ? " films présents" : " film présent") + " · " + m + (m > 1 ? " manquants" : " manquant"); },
+      wholeSeason: function (s, n) { return "Saison " + s + " entière" + (n ? " (" + n + " épisodes)" : ""); },
+      seasonEps: function (s, list) { return "Saison " + s + " : " + (list.indexOf(",") >= 0 || list.indexOf("-") >= 0 ? "épisodes " : "épisode ") + list; },
+      sagaHolesTitle: "D'après les numéros dans les titres",
+      noneEpisodes: "Rien ne manque dans vos séries.",
+      noneSagas: "Toutes vos sagas sont complètes.",
       dismissedLine: function (n) { return n + (n > 1 ? " groupes écartés" : " groupe écarté") + " comme faux positifs"; },
       showAll: "Tout réafficher",
       pendingTag: "en cours, copie vers un autre disque",
@@ -251,6 +266,21 @@
       doneHint: "The files are in the .evey-trash folder of their library: nothing is deleted from the disk until you empty it.",
       undo: "Undo",
       notDup: "Not a duplicate",
+      tabDups: "Duplicates",
+      tabSagas: "Incomplete sagas",
+      tabEpisodes: "Missing episodes",
+      ignore: "Ignore",
+      ignoredLine: function (n) { return n + (n > 1 ? " items ignored" : " item ignored"); },
+      gapsUnavailable: "Not available: it needs Evey 0.1.16 or later, and the media.gaps permission granted to the plugin.",
+      gapsLoading: "Reading what is missing...",
+      fromTmdb: "from TMDB",
+      fromNumbering: "from your files' numbering",
+      sagaOwned: function (o, m) { return o + (o > 1 ? " films held" : " film held") + " · " + m + " missing"; },
+      wholeSeason: function (s, n) { return "Season " + s + ", all of it" + (n ? " (" + n + " episodes)" : ""); },
+      seasonEps: function (s, list) { return "Season " + s + ": " + (list.indexOf(",") >= 0 || list.indexOf("-") >= 0 ? "episodes " : "episode ") + list; },
+      sagaHolesTitle: "From the numbers in the titles",
+      noneEpisodes: "Nothing is missing from your series.",
+      noneSagas: "All your sagas are complete.",
       dismissedLine: function (n) { return n + (n > 1 ? " groups" : " group") + " set aside as false positives"; },
       showAll: "Show them again",
       pendingTag: "in progress, copying to another disk",
@@ -279,6 +309,9 @@
   // out of the duplicates until Evey drops them, and the list read again
   // every few seconds meanwhile.
   var pending = {};
+  var tab = "dups";
+  // gaps: what evey.media.gaps answered, or { error } when it could not.
+  var gaps = null;
   // Groups the admin marked "not a duplicate", by dupKey, kept in the
   // plugin's prefs (this profile). A group that gains a copy comes back.
   var dismissed = {};
@@ -557,24 +590,73 @@
     return box;
   }
 
+  // ranges: 1,2,3,5,7,8 -> "1-3, 5, 7-8".
+  function ranges(nums) {
+    var out = [], i = 0;
+    while (i < nums.length) {
+      var a = nums[i], b = a;
+      while (i + 1 < nums.length && nums[i + 1] === b + 1) { i++; b = nums[i]; }
+      out.push(a === b ? String(a) : a + "-" + b);
+      i++;
+    }
+    return out.join(", ");
+  }
+
+  function tabBar(counts) {
+    var bar = h("div", "display:flex;gap:22px;border-bottom:1px solid var(--border, rgba(127,127,127,.25));margin:0 0 16px;overflow-x:auto;");
+    [["dups", S.tabDups], ["sagas", S.tabSagas], ["episodes", S.tabEpisodes]].forEach(function (t) {
+      var on = tab === t[0];
+      var b = h("button", "background:none;border:none;border-bottom:2px solid " + (on ? "var(--text, #f1f5f9)" : "transparent") +
+        ";padding:8px 0;margin-bottom:-1px;font:inherit;font-size:14px;cursor:pointer;white-space:nowrap;color:" +
+        (on ? "var(--text, #f1f5f9)" : "var(--text-muted, #9aa0aa)") + ";");
+      b.appendChild(h("span", "", t[1]));
+      if (counts[t[0]] != null) b.appendChild(h("span", "margin-left:6px;font-size:12px;opacity:.7;", String(counts[t[0]])));
+      b.onclick = function () { tab = t[0]; load(); };
+      bar.appendChild(b);
+    });
+    return bar;
+  }
+
+  function ignoreButton(key) {
+    var b = button(S.ignore, false, function () { dismissed[key] = true; saveDismissed(); load(); });
+    b.style.marginLeft = "auto";
+    return b;
+  }
+
+  function asideLine(n, keys) {
+    var aside = h("p", "margin:6px 0 0;font-size:12px;" + MUTED, (tab === "dups" ? S.dismissedLine(n) : S.ignoredLine(n)) + " · ");
+    var again = h("a", "color:var(--accent, #7aa2f7);cursor:pointer;", S.showAll);
+    again.onclick = function () { keys.forEach(function (k) { delete dismissed[k]; }); saveDismissed(); load(); };
+    aside.appendChild(again);
+    return aside;
+  }
+
   function render(all) {
     var items = settle(all);
-    var all = findDuplicates(items);
-    var dups = all.filter(function (g) { return !dismissed[dupKey(g)]; });
-    var setAside = all.length - dups.length;
-    var holes = findSagaHoles(items);
+    var everyDup = findDuplicates(items);
+    var dups = everyDup.filter(function (g) { return !dismissed[dupKey(g)]; });
+    var holes = findSagaHoles(items).filter(function (g) { return !dismissed["hole:" + g.base]; });
+    var gs = gaps && !gaps.error ? gaps : { series: [], sagas: [] };
+    var series = (gs.series || []).filter(function (x) { return !dismissed["series:" + x.seriesId]; });
+    var sagas = (gs.sagas || []).filter(function (x) { return !dismissed["saga:" + x.collectionId]; });
     document.body.innerHTML = "";
     var root = h("div", "max-width:960px;font-size:13px;color:var(--text, #f1f5f9);");
+    root.appendChild(tabBar({ dups: dups.length, sagas: gaps && !gaps.error ? sagas.length + holes.length : null, episodes: gaps && !gaps.error ? series.length : null }));
+    if (tab === "dups") renderDups(root, items, everyDup, dups);
+    else if (tab === "sagas") renderSagas(root, sagas, holes);
+    else renderEpisodes(root, series);
+    document.body.appendChild(root);
+    fit();
+  }
+
+  function renderDups(root, items, everyDup, dups) {
     var summary = S.scanned(items.length);
     var saved = fmtSize(recoverable(dups));
     if (saved) summary += " · " + S.recoverable(saved);
     root.appendChild(h("p", "margin:0 0 14px;" + MUTED, summary));
-
     if (recent.length) root.appendChild(recentBox());
-
     var state = { missingPath: false };
-    var dupBox = section(S.dupTitle, dups.length);
-    if (dups.length === 0) dupBox.appendChild(h("p", "margin:0;" + MUTED, S.none));
+    if (dups.length === 0) root.appendChild(h("p", "margin:0;" + MUTED, S.none));
     for (var i = 0; i < dups.length; i++) {
       var d = dups[i];
       var pl = plan(d);
@@ -588,10 +670,9 @@
       nd.style.marginLeft = "auto";
       head.appendChild(nd);
       if (canTrash && pl.spares.length) {
-        var keep = button(S.keepBest(pl.spares.length), true, (function (spares, grp) {
+        head.appendChild(button(S.keepBest(pl.spares.length), true, (function (spares, grp) {
           return function () { trash(spares, grp); };
-        })(pl.spares, d));
-        head.appendChild(keep);
+        })(pl.spares, d)));
       }
       c.appendChild(head);
       // By year (newest first), then best quality first within a year.
@@ -601,35 +682,90 @@
         return better(a, b) ? -1 : better(b, a) ? 1 : 0;
       });
       for (var j = 0; j < sorted.length; j++) c.appendChild(copyRow(sorted[j], !!pl.best[sorted[j].id], state, d));
-      dupBox.appendChild(c);
+      root.appendChild(c);
     }
-    if (state.missingPath) dupBox.appendChild(h("p", "margin:6px 0 0;font-size:12px;" + MUTED, S.noPathHint));
-    if (setAside) {
-      var aside = h("p", "margin:6px 0 0;font-size:12px;" + MUTED, S.dismissedLine(setAside) + " · ");
-      var again = h("a", "color:var(--accent, #7aa2f7);cursor:pointer;", S.showAll);
-      again.onclick = function () { dismissed = {}; saveDismissed(); load(); };
-      aside.appendChild(again);
-      dupBox.appendChild(aside);
-    }
-    root.appendChild(dupBox);
+    if (state.missingPath) root.appendChild(h("p", "margin:6px 0 0;font-size:12px;" + MUTED, S.noPathHint));
+    var setAside = everyDup.filter(function (g) { return dismissed[dupKey(g)]; }).map(dupKey);
+    if (setAside.length) root.appendChild(asideLine(setAside.length, setAside));
+  }
 
-    var holeBox = section(S.holeTitle, holes.length);
-    if (holes.length === 0) holeBox.appendChild(h("p", "margin:0;" + MUTED, S.none));
-    for (var k = 0; k < holes.length; k++) {
-      var g = holes[k];
-      var hc = card();
-      var hr = h("div", "display:flex;gap:12px;align-items:center;");
-      var hb = h("div", "flex:1;min-width:0;");
-      hb.appendChild(h("strong", "font-size:14px;", g.sample.title));
-      hb.appendChild(h("div", MUTED + "margin-top:2px;", S.missing(g.missing) + " · " + S.have(g.have)));
-      hr.appendChild(hb);
-      hr.appendChild(button(S.open, false, (function (id) { return function () { window.evey.navigate("/media/" + id); }; })(g.sample.id)));
-      hc.appendChild(hr);
-      holeBox.appendChild(hc);
+  function gapsNote(root) {
+    if (!gaps) { root.appendChild(h("p", "margin:0;" + MUTED, S.gapsLoading)); return true; }
+    if (gaps.error) { root.appendChild(h("p", "margin:0;color:var(--warning, #f59e0b);", S.gapsUnavailable)); return true; }
+    return false;
+  }
+
+  function renderSagas(root, sagas, holes) {
+    var noGaps = gapsNote(root);
+    if (!noGaps && sagas.length === 0 && holes.length === 0) root.appendChild(h("p", "margin:0;" + MUTED, S.noneSagas));
+    for (var i = 0; i < sagas.length; i++) {
+      var sg = sagas[i];
+      var c = card();
+      var head = h("div", "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;");
+      head.appendChild(h("strong", "font-size:14px;", sg.name));
+      head.appendChild(h("span", MUTED, S.sagaOwned(sg.owned, (sg.missing || []).length) + " · " + S.fromTmdb));
+      head.appendChild(ignoreButton("saga:" + sg.collectionId));
+      c.appendChild(head);
+      (sg.missing || []).forEach(function (m) {
+        var row = h("div", "display:flex;gap:10px;align-items:center;padding:4px 0;border-top:1px solid var(--border, rgba(127,127,127,.18));");
+        row.appendChild(h("span", "", m.title + (m.releaseDate ? " (" + m.releaseDate.slice(0, 4) + ")" : "")));
+        c.appendChild(row);
+      });
+      root.appendChild(c);
     }
-    root.appendChild(holeBox);
-    document.body.appendChild(root);
-    fit();
+    if (holes.length) {
+      root.appendChild(h("h3", "font-size:13px;font-weight:600;margin:16px 0 8px;" + MUTED, S.sagaHolesTitle));
+      for (var k = 0; k < holes.length; k++) {
+        var g = holes[k];
+        var hc = card();
+        var hr = h("div", "display:flex;gap:12px;align-items:center;");
+        var hb = h("div", "flex:1;min-width:0;");
+        hb.appendChild(h("strong", "font-size:14px;", g.sample.title));
+        hb.appendChild(h("div", MUTED + "margin-top:2px;", S.missing(g.missing) + " · " + S.have(g.have)));
+        hr.appendChild(hb);
+        hr.appendChild(button(S.open, false, (function (id) { return function () { window.evey.navigate("/media/" + id); }; })(g.sample.id)));
+        hr.appendChild(ignoreButton("hole:" + g.base));
+        hc.appendChild(hr);
+        root.appendChild(hc);
+      }
+    }
+    var ignored = Object.keys(dismissed).filter(function (k) { return k.indexOf("saga:") === 0 || k.indexOf("hole:") === 0; });
+    if (ignored.length) root.appendChild(asideLine(ignored.length, ignored));
+  }
+
+  function renderEpisodes(root, series) {
+    var noGaps = gapsNote(root);
+    if (!noGaps && series.length === 0) root.appendChild(h("p", "margin:0;" + MUTED, S.noneEpisodes));
+    for (var i = 0; i < series.length; i++) {
+      var sr = series[i];
+      var c = card();
+      var head = h("div", "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;");
+      head.appendChild(h("strong", "font-size:14px;", sr.title + (sr.year ? " (" + sr.year + ")" : "")));
+      head.appendChild(h("span", MUTED, sr.fromCatalog ? S.fromTmdb : S.fromNumbering));
+      head.appendChild(button(S.open, false, (function (id) { return function () { window.evey.navigate("/media/" + id); }; })(sr.seriesId)));
+      head.appendChild(ignoreButton("series:" + sr.seriesId));
+      head.lastChild.style.marginLeft = "0";
+      head.children[2].style.marginLeft = "auto";
+      c.appendChild(head);
+      (sr.seasons || []).forEach(function (se) {
+        var eps = se.episodes || [];
+        var nums = eps.map(function (e) { return e.episode; });
+        var line = se.whole ? S.wholeSeason(se.season, eps.length) : S.seasonEps(se.season, ranges(nums));
+        var row = h("div", "padding:3px 0;border-top:1px solid var(--border, rgba(127,127,127,.18));", line);
+        var titles = eps.filter(function (e) { return e.title; }).map(function (e) { return e.episode + ". " + e.title; });
+        if (titles.length) row.title = titles.join("\n");
+        c.appendChild(row);
+      });
+      root.appendChild(c);
+    }
+    var ignored = Object.keys(dismissed).filter(function (k) { return k.indexOf("series:") === 0; });
+    if (ignored.length) root.appendChild(asideLine(ignored.length, ignored));
+  }
+
+  function loadGaps() {
+    if (!window.evey.media.gaps) { gaps = { error: "no bridge" }; return Promise.resolve(); }
+    return window.evey.media.gaps().then(function (g) { gaps = g || { series: [], sagas: [] }; })
+      .catch(function (err) { gaps = { error: err && err.message ? err.message : String(err) }; });
   }
 
   function load() {
@@ -651,6 +787,6 @@
     fit();
     window.evey.prefs.get("dismissed").then(function (r) {
       try { (JSON.parse((r && r.value) || "[]") || []).forEach(function (k) { dismissed[k] = true; }); } catch (e) { /* a bad value starts empty */ }
-    }).catch(function () {}).then(load);
+    }).catch(function () {}).then(function () { load(); loadGaps().then(load); });
   });
 })();
